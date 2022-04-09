@@ -42,7 +42,7 @@ jobs:
           echo "$GITHUB_REF"
           
       - name: Check - Eng Env (rc)
-        if: ${{ startsWith(${GITHUB_REF#refs/heads/}, 'rc-') }}
+        if: ${{ startsWith(${GITHUB_REF_NAME}, 'main') }}
         run: |
           echo "DEPLOY_ENV=new" >> $GITHUB_ENV
           
