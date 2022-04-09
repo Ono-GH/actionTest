@@ -51,4 +51,5 @@ jobs:
           
       - name: Check env
         run: |
-          echo "$env.DEPLOY_ENV"          
+          echo "env=$env.DEPLOY_ENV"
+          echo ${GITHUB_SHA::7}
