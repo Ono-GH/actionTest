@@ -21,6 +21,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GITHUB_CONTEXT: ${{ toJSON(github) }}
+      GH_REF_NAME: ${{ GITHUB_REF_NAME }}
+      GH_REF: ${{ GITHUB_REF }}
 
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
@@ -35,4 +37,6 @@ jobs:
       - name: Run a multi-line script
         run: |
           echo "$GITHUB_CONTEXT"
+          echo "$GITHUB_REF_NAME"
+          echo "$GITHUB_REF"
         
