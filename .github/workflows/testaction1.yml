@@ -23,6 +23,7 @@ jobs:
       GITHUB_CONTEXT: ${{ toJSON(github) }}
       GH_REF_NAME: ${GITHUB_REF_NAME}
       GH_REF: ${GITHUB_REF}
+      DEPLOY_ENV: old  # Default
 
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
@@ -39,4 +40,12 @@ jobs:
           # echo "$GITHUB_CONTEXT"
           echo "$GITHUB_REF_NAME"
           echo "$GITHUB_REF"
-        
+          
+      - name: Check - Eng Env (rc)
+        if: ${{ startsWith(${GITHUB_REF#refs/heads/}, 'rc-') }}
+        run: |
+          echo "DEPLOY_ENV=new" >> $GITHUB_ENV
+          
+      - name: Check env
+        run: |
+          echo "$env.DEPLOY_ENV"          
