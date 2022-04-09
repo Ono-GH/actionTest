@@ -46,6 +46,8 @@ jobs:
         if: ${{ startsWith(github.ref_name, 'main') }}
         run: |
           echo "DEPLOY_ENV=new" >> $GITHUB_ENV
+          echo "dep: $DEPLOY_ENV"
+          echo "dep2: ${{ env.DEPLOY_ENV }}"
           
       - name: Check env
         run: |
