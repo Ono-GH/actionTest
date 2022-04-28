@@ -64,3 +64,4 @@ jobs:
           echo "g_env= ${G_ENV}"
           echo "g_env= ${{ env.G_ENV }}"
           echo "g_env= $G_ENV"
+          echo "g_env= ${{ G_ENV }}"
