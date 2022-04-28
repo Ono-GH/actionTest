@@ -52,12 +52,13 @@ jobs:
           echo "DEPLOY_ENV=new" >> $GITHUB_ENV
           echo "dep: $DEPLOY_ENV"
           echo "dep2: ${{ env.DEPLOY_ENV }}"
-          
+        
+      
       - name: Check env
+          # echo "g_env= $G_ENV"
+          # echo "g_env= ${{ G_ENV }}"
+          # echo "g_env= ${{ env.G_ENV }}"
         run: |
           echo "env=$env.DEPLOY_ENV"
           echo ${GITHUB_SHA::7}
-          # echo "g_env= $G_ENV"
           echo "g_env= ${G_ENV}"
-          # echo "g_env= ${{ G_ENV }}"
-          echo "g_env= ${{ env.G_ENV }}"
