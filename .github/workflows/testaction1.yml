@@ -58,4 +58,9 @@ jobs:
         run: |
           echo "env=${{ env.DEPLOY_ENV }}"
           echo ${GITHUB_SHA::7}
+          echo "SHORT_SHA=${{ GITHUB_SHA::7 }}" >> $GITHUB_ENV
+          echo "Short_SHA1=${{ env.SHORT_SHA }}"
           echo "env.g_env= ${{ env.G_ENV }}"
+          
+      - name: Echo GH env var
+        run: echo "Short_SHA2=${{ env.SHORT_SHA }}"
