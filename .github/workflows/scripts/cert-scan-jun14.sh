@@ -1,34 +1,39 @@
 #!/bin/bash
-# Cert-Scanner.sh = Private certificate scanner (.jks or .pem types) in a GitHub repo.
+# Cert-Scanner.sh = Certificate scanner (.jks or .pem types) - List and/or Warn of expiring certs in a GitHub repo.
 #   Can operate in 3 modes:
 #     1) l = List: all private certs in a table
 #     2) w = Warning: Find any expiring certs and notify via Jira ticket
 #     3) b = Both List & Warning modes
+#  Examples:
+#    - list mode only => ./cert-scanner.sh -m l   # creates GH .md file & checks in (local .tsv to open in excel)
+#    - warning mode   => ./cert-scanner.sh -m w -d 50 -j CCM   # warn if expires within 50 days and open Jira in CCM project
+#    - warning mode   => ./cert-scanner.sh -m b -d 50 -j CCM
 
 ### Jira Creds (GH use Secret | local: set env var)
-JIRA_USER="operzia"
-# JIRA_API_TOKEN="Apr44\$\$Apr44\$\$"
+JIRA_USER="operzia" # Edit: Your Apptio alias
+# JIRA_API_TOKEN= your Jira pwd - set in cmd window (not in code) Ex: export JIRA_API_TOKEN=abc123 then run script
 
 ### Jira Service account (jira.apptio.com only)
 # JIRA_USER="svc_jira-admin"
-# JIRA_API_TOKEN="QAZwsx@123"
+# JIRA_API_TOKEN= ping operzia for token
 
 ### Date Expiry Function
-# - Required params: 1) Cert name 2) Cert expiry date 3) Cert filename w/ path 4) Cert type (PEM or JKS)
-# - $JIRA_PROJ = which Jira project to create ticket under (script param: -j )
-# - $DAYS = if cert expires with this number of days, create Jira ticket (script param: -d )
+# - Function params (required): 1) Cert name 2) Cert expiry date 3) Cert filename w/ path 4) Cert type (PEM or JKS)
+# - Script param:
+#   - $JIRA_PROJ = which Jira project to create ticket under (script param: -j <proj>)
+#   - $DAYS = if cert expires with this number of days, create Jira ticket (script param: -d <int>)
 cert_expiry_check() {
     #Param check
     echo "name= $1"
     echo "certExp= $2"
     echo "certFile= $3"
     echo "certType= $4"
-    echo "jiraProj= $5"
+    echo "jiraProj= $JIRA_PROJ"
+    echo "daysExpire= $DAYS"
 
     #setup dates
     epoch_day=60*60*24 #sec*min*hour
-    days_expire=$DAYS
-    epoch_warn=$(( days_expire*epoch_day ))
+    epoch_warn=$(( $DAYS*epoch_day ))
     # echo "epoch warn=$epoch_warn"
 
     today_epoch="$(date +%s)"
@@ -45,27 +50,26 @@ cert_expiry_check() {
 
     timeleft=`expr $expire_epoch - $today_epoch`
     daysleft=$(( timeleft/epoch_day ))
-    echo "time_epoch= $timeleft  days_left= $daysleft"
+    echo "time_epoch= $timeleft => days_left= $daysleft"
 
     if [[ $timeleft -le $epoch_warn ]]; then
         CERT_WARN="WARNING = $3 expires $2 (in $daysleft days).  Certificate Name: $1"
         echo "****** $CERT_WARN ******"
         # Call Jira_Check function - Check if ticket already exists
         jira_check $3 $5
-        ### OFF - No spam Jira ###
-        # Only create Jira ticket if Jira search returns no open tickets for cert file
+
+        # Only create Jira ticket if Jira_check sets BUG_EXISTS=0 (no open tickets for cert file)
         if [[ $BUG_EXISTS -eq 0 ]]; then
-            echo "*** TEST: create bug"
-        #     echo '10.250.16.130 jira.apptio.com' | sudo tee -a /etc/hosts
-        #     SUMMARY="GH Cert Scan: Warning - Cert Expiring soon. File: $3"
-        #     echo "sum= $SUMMARY"
-        #     DATA='{"fields":{"project":{"key": "$5"},"summary":"'
-        #     DATA+=${SUMMARY}
-        #     DATA+='","description": "'
-        #     DATA+=${CERT_WARN}
-        #     DATA+='","issuetype": {"name": "Bug"}}}'
-        #     echo "data= $DATA"
-        #     curl -D- -u $JIRA_USER:$JIRA_API_TOKEN -X POST --data "$DATA" -H "Content-Type: application/json" https://jira.apptio.com/rest/api/2/issue/
+        #     echo '10.250.16.130 jira.apptio.com' | sudo tee -a /etc/hosts  # ONLY for GH runner (comment for local on VPN)
+            SUMMARY="GH Cert Scan: Warning - Cert Expiring soon. File: $3"
+            echo "sum= $SUMMARY"
+            DATA='{"fields":{"project":{"key": "'$5'"},"summary":"'
+            DATA+=${SUMMARY}
+            DATA+='","description": "'
+            DATA+=${CERT_WARN}
+            DATA+='","issuetype": {"name": "Bug"}}}'
+            echo "data= $DATA"
+            curl -D- -u $JIRA_USER:$JIRA_API_TOKEN -X POST --data "$DATA" -H "Content-Type: application/json" https://jira-s.apptio.com/rest/api/2/issue/
         fi
     else
         echo "******* NO CERT EXPIRY DETECTED - Expires in $daysleft days ******"
@@ -82,14 +86,15 @@ jira_check() {
     echo "jSearch=$1"  # search Jira for Cert file
     echo "jProject=$2"
 
+    echo "Starting: Jira search for existing tickets..."
     # Query Jira and extract data in response - pipe to .json file to 
     # JIRA (use srv accnt)
     # curl -D- -s -u $JIRA_USER:$JIRA_API_TOKEN -X GET -H "Content-Type: application/json" \
     # 'https://jira.apptio.com/rest/api/2/search?jql=project%20%3D%20'$1'%20AND%20status%20in%20(Open%2C%20"In%20Progress")%20AND%20text%20~%20"'$2'"%20AND%20reporter%20in%20(svc_jira-admin)&fields=id,key,summary' | grep "{" > tempJira.json
 
-    # JIRA STAGE (use your account)
-    curl -D- -s -u $JIRA_USER:$JIRA_API_TOKEN -X GET -H "Content-Type: application/json" \
-    'https://jira-s.apptio.com/rest/api/2/search?jql=project%20%3D%20'$1'%20AND%20status%20in%20(Open%2C%20"In%20Progress")%20AND%20text%20~%20"'$2'"&fields=id,key,summary' | grep "{" > tempJira.json
+    # JIRA STAGE (jira-s) = Test env (access - use your account)
+    curl -D- -u $JIRA_USER:$JIRA_API_TOKEN -X GET -H "Content-Type: application/json" \
+    'https://jira-s.apptio.com/rest/api/2/search?jql=project%20%3D%20'$2'%20AND%20status%20in%20(Open%2C%20"In%20Progress")%20AND%20text%20~%20"'$1'"&fields=id,key,summary' | grep "{" > tempJira.json
     
     BUG_EXISTS=$(jq '.issues | length' tempJira.json)
     BUG_KEY=$(jq '.issues[0].key' tempJira.json)
@@ -105,9 +110,9 @@ jira_check() {
 }
 
 ### Detect params to run
-# - mode: l=list only | w=warning only | b=both
-# - days: # of days before warning of expiring cert (only for warning mode)
-# - jira: jira project to open ticket for (only for warning mode)
+#   - mode: l=list only | w=warning only | b=both
+#   - days: # of days before warning of expiring cert (only for warning | both mode)
+#   - jira: jira project to open ticket for (only for warning | both mode)
 while getopts "m:d:j:" options
 do
     case "${options}"
@@ -129,8 +134,8 @@ fi
 # DEFAULT (cur dir) = Hack dir (BIIT) jks only # expired cert
 # cd /Users/OPerzia/git2/apptio-bi/tron_gh/tron  #TRON (pem only)
 # cd /Users/OPerzia/git2/ccm/cloud-service  #CCM (jks & pem)
-cd /Users/OPerzia/git2/apptio-bi/ssr/ssa-app  #SSA (2 pem)
-# cd /Users/OPerzia/git2/Shift
+# cd /Users/OPerzia/git2/apptio-bi/ssr/ssa-app  #SSA (2 pem)
+cd /Users/OPerzia/git2/Shift
 echo "Find certs under: " $PWD
 
 IFS=$'\n'  # IFS: Allow splitting files found to be 1/line in array
@@ -173,8 +178,8 @@ echo ".JKS files= $JKS_COUNT"
 
 # WARNING MODE: Find certs expiring under X days from now
 if [[ ($MODE = 'w' || $MODE = 'b') && $DAYS -gt 0 ]]; then
-    echo "Start - Cert Expiry mode"
-    echo " - Cert Expiry => PEM"
+    echo "START - Cert Expiry mode"
+    echo " - Start Cert Expiry => PEM"
     # For each PEM file: extract name (subject) & expiry date (enddate) & build table
     for (( i=0;i<$PEM_COUNT;i++ )); do
         # Check if cert file is to be ignored
@@ -195,7 +200,7 @@ if [[ ($MODE = 'w' || $MODE = 'b') && $DAYS -gt 0 ]]; then
                     CERT_NAME_PEM=${PEM_DATA[${x}]}
                     (( x += 1 ))
                     CERT_EXPIRY=${PEM_DATA[${x}]}
-                    cert_expiry_check $CERT_NAME_PEM $CERT_EXPIRY ${PEM_ARRAY[${i}]} PEM $JIRA_PROJ
+                    cert_expiry_check $CERT_NAME_PEM $CERT_EXPIRY ${PEM_ARRAY[${i}]} PEM
                     (( x += 1 ))
                 fi
             done
@@ -204,7 +209,7 @@ if [[ ($MODE = 'w' || $MODE = 'b') && $DAYS -gt 0 ]]; then
     echo " END: Cert Expiry => PEM"
 
     # For each JKS file: extract name (subject) & expiry date (enddate) & build table
-    echo " - Cert Expiry => JKS"
+    echo " - Start Cert Expiry => JKS"
     for (( i=0;i<$JKS_COUNT;i++ )); do
         # Check if cert file is to be ignored
         if [[ " ${IGNORE_FILE_ARRAY[*]} " == *"${JKS_ARRAY[${i}]}"* ]]; then
@@ -223,7 +228,7 @@ if [[ ($MODE = 'w' || $MODE = 'b') && $DAYS -gt 0 ]]; then
                     CERT_NAME_JKS=${JKS_DATA[${x}]}
                     (( x += 1 ))
                     CERT_EXPIRY=${JKS_DATA[${x}]}
-                    cert_expiry_check $CERT_NAME_JKS $CERT_EXPIRY ${JKS_ARRAY[${i}]} JKS $JIRA_PROJ
+                    cert_expiry_check $CERT_NAME_JKS $CERT_EXPIRY ${JKS_ARRAY[${i}]} JKS
                     (( x += 1 ))
                 fi
             done
@@ -235,7 +240,7 @@ fi
 
 ### LIST MODE ###
 if [[ $MODE = "l" || $MODE = "b" ]]; then
-    echo "Start - Cert List mode"
+    echo "START - Cert List mode"
     # Create file and headers (tsv & md formats)
     echo -e "Path: Cert File\tCert Name\tExpiry Date" > certlist.tsv
     echo "| Path: Cert File | Cert Name | Expiry Date |" > certlist.md
@@ -296,15 +301,12 @@ if [[ $MODE = "l" || $MODE = "b" ]]; then
                     echo "IGNORED ${x}: name array contains ${JKS_DATA[${x}]}"
                     (( x += 1 )) # Increment: skip expiry date too
                 else
-                    echo "x1=${x} | i1=${i}"
                     TSV_LINE_JKS+="${JKS_DATA[${x}]}\t"
                     MD_LINE_JKS+=" ${JKS_DATA[${x}]} |"
                     if (( $(expr $x % 2 ) == 1 && ($x > 0) )); then
-                        echo "x2=${x} | i2=${i}"
                         echo -e $TSV_LINE_JKS >> certlist.tsv
                         echo $MD_LINE_JKS >> certlist.md
                         if (( x < $JKS_DATA_COUNT-1 && ($x > 0) )); then
-                            echo "x3=${x} | i3=${i} | arr=${JKS_ARRAY[${i}]} | dat=${JKS_DATA[${x}]}"
                             TSV_LINE_JKS="${JKS_ARRAY[${i}]}\t"
                             MD_LINE_JKS="| ${JKS_ARRAY[${i}]} |"
                         fi
