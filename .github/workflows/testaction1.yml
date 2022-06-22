@@ -43,7 +43,10 @@ jobs:
         run: |
           # echo "$GITHUB_CONTEXT"
           echo "$GITHUB_REF_NAME"
+          
           echo "$GITHUB_REF"
+          
+          
           echo "${{ github.ref_name }}"
           
       - name: Check - Eng Env (rc)
