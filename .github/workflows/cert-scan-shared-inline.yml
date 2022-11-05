@@ -82,7 +82,7 @@ jobs:
           echo " - Jira Project  : $JIRA_PROJ"
           fi
           
-          cd repo_scan
+          cd repo_scan/.github/workflows  # ****** TEMP TEST: no cert case ******
           echo "Find certs under: " $PWD
           IFS=$'\n'  
           JKS_ARRAY=($(find . -type f -name "*.jks" 2>/dev/null))
