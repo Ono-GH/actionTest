@@ -23,7 +23,7 @@ on:
 
   schedule:
     # * is a special character in YAML so you have to quote this string
-    - cron:  '01 16 5 * *'  # 1st of every month @ 8:30am UTC
+    - cron:  '45 23 5 * *'  # 1st of every month @ 8:30am UTC
 
 jobs:
   setup-env:
@@ -44,7 +44,7 @@ jobs:
 
       - name: Set Jira
         id: step3
-        run: echo "::set-output name=jira::${{ github.event.inputs.jira || 'TRON' }}"
+        run: echo "::set-output name=jira::${{ github.event.inputs.jira || 'Jira_Proj' }}"
 
   act_test-scan:
     needs: setup-env
