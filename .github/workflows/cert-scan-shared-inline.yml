@@ -379,10 +379,14 @@ jobs:
 #          git commit -m "update cert table"
 #          git push
 
-      # Create Pull Request (PR) for table updates
+      # Create Pull Request (PR) for cert table updates (md & tsv files)
       - name: Cert Table - PR
         uses: peter-evans/create-pull-request@v4
         with:
           path: repo_scan
+          title: PR for Cert Tables
+          commit-message: Updates detected for Cert Table
+          delete-branch: true
           add-paths: |
             *.md
+            *.tsv
