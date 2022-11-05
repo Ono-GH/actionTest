@@ -1,0 +1,380 @@
+# Cert Scanner: Scan checked out repo for certificates (.pem or .jks)
+# - list all identified certs in table
+#   - .tsv (Excel) & .md (viewed in GH root of repo)
+# - Jira Ticket: Cert Warning mode will open Jira ticket for any certs expiring within X number of days
+
+name: Cert Scan (shared)
+on:
+  workflow_call:   # Allow other workflows to call/use
+    inputs:
+      mode:
+        description: 'Pick mode to run: list or Jira warning or both'
+        required: true
+        type: string
+      days:
+        description: 'Jira cert expiry warning if expiring in # of days (only for warn or both mode)'
+        required: false
+        type: string
+      jira:
+        description: 'Jira Project to open cert expiry warn (only for warn or both mode)'
+        required: false
+        type: string
+      repo:
+        description: 'Repository to checkout and scan'
+        required: true
+        type: string
+    secrets:
+      jira_user: # Jira Org level secret
+        required: true
+      jira_pwd: # Jira Org level secret
+        required: true
+
+  # schedule:
+  # - cron: '0 0 * 1-12 *'  # Run once a month (test schedule)
+
+jobs:
+  cert-scan:
+    runs-on: ubuntu-latest # NO Jira Access
+    env:
+      JIRA_USER: ${{ secrets.jira_user }}
+      JIRA_API_TOKEN: ${{ secrets.jira_pwd }}
+
+    steps:
+      - name: Check inputs
+        run: |
+          echo "mode: ${{ inputs.mode }}"
+          echo "days: ${{ inputs.days }}"
+          echo "jira: ${{ inputs.jira }}"
+          echo "repo: ${{ inputs.repo }}"
+          echo "jUser: $JIRA_USER"
+          echo "gh_work: " $GITHUB_WORKSPACE
+
+      # Repo code to cert scan (from Input parameter)
+      - name: Checkout Repo to Scan
+        uses: actions/checkout@v3
+        with: 
+          repository: ${{ inputs.repo }}
+          path: repo_scan
+
+      # Java installed (Java's KeyTool for cert sniffing required .jks files)
+      - name: Install Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      # Cert-Scanner.sh = certificate scanner (.jks or .pem types) in a GitHub repo.
+      #   Can operate in 3 modes:
+      #     1) List: all private certs in a table
+      #     2) Warn: Find any expiring certs and notify via Jira ticket (days to expiry & Jira project to use)
+      #     3) Both: List & Warn modes
+      - name: Cert List Mode 
+        if: ${{ inputs.mode == 'list' || inputs.mode == 'both' }}
+        shell: bash
+        run: |
+          MODE=${{ inputs.mode }}
+          DAYS=${{ inputs.days }}
+          JIRA_PROJ=${{ inputs.jira }}
+          echo "*** Cert Scanner: Settings ***"
+          echo " - Mode: $MODE"
+          if [[ $MODE = 'warn' || $MODE = 'both' ]]; then
+          echo " - Warning Time (days)  : $DAYS"
+          echo " - Jira Project  : $JIRA_PROJ"
+          fi
+          
+          cd repo_scan
+          echo "Find certs under: " $PWD
+          IFS=$'\n'  
+          JKS_ARRAY=($(find . -type f -name "*.jks" 2>/dev/null))
+          PEM_ARRAY=($(find . -type f \( -name "*.cer" -o -name "*.p12" -o -name "*.pfx" -o -name "*.pem" \) 2>/dev/null))
+          
+          IGNORE_FILE_ARRAY=()
+          while IFS= read -r line; do
+          IGNORE_FILE_ARRAY+=("$line")
+          done < <(grep -v -e "^#" -e "^$" "./.github/workflows/scripts/files/ignore_cert_file.txt")
+          IGNORE_FILE_COUNT=${#IGNORE_FILE_ARRAY[@]}
+          echo "ignore_cert_file_cnt=$IGNORE_FILE_COUNT"
+          IGNORE_NAME_ARRAY=()
+          while IFS= read -r line; do
+          IGNORE_NAME_ARRAY+=("$line")
+          done < <(grep -v -e "^#" -e "^$" "./.github/workflows/scripts/files/ignore_cert_name.txt")
+          IGNORE_NAME_COUNT=${#IGNORE_NAME_ARRAY[@]}
+          echo "ignore_cert_name_cnt=$IGNORE_NAME_COUNT"
+          PEM_COUNT=${#PEM_ARRAY[@]}
+          echo ".PEM files= $PEM_COUNT"
+          JKS_COUNT=${#JKS_ARRAY[@]}
+          echo ".JKS files= $JKS_COUNT"
+        
+          CERT_LISTED=0
+          if [[ $MODE = 'list' || $MODE = 'both' ]]; then
+          echo "START - Cert List mode"
+          echo -e "Path: Cert File\tCert Name\tExpiry Date" > ./certlist.tsv
+          echo "| Path: Cert File | Cert Name | Expiry Date |" > ./certlist.md
+          echo "| --------------- | --------- | ----------- |" >> ./certlist.md
+          
+          echo " - Cert List mode => PEM"
+          for (( i=0;i<$PEM_COUNT;i++ )); do
+          echo "PEM_file=${PEM_ARRAY[${i}]}"
+          if [[ " ${IGNORE_FILE_ARRAY[*]} " == *"${PEM_ARRAY[${i}]}"* ]]; then
+          echo "IGNORED ${i}: file array contains ${PEM_ARRAY[${i}]}"
+          else
+          PEM_DATA=($(openssl x509 -noout -subject -enddate -in ${PEM_ARRAY[${i}]} 2>/dev/null \
+          | sed -e 's/.*subject= \(.*\)/\1/' \
+          | sed -e 's/.*notAfter=\(.*\)/\1/' ))
+          PEM_DATA_COUNT=${#PEM_DATA[@]}
+          echo "PEM DATA Count= $PEM_DATA_COUNT"
+          
+          for (( x=0;x<$PEM_DATA_COUNT;x+=2 )); do
+          if [[ " ${IGNORE_NAME_ARRAY[*]} " == *"${PEM_ARRAY[${i}]}"* ]]; then
+          echo "IGNORED ${x}: name array contains ${PEM_ARRAY[${i}]}"
+          else
+          TSV_LINE_PEM="${PEM_ARRAY[${i}]}\t"
+          MD_LINE_PEM="| ${PEM_ARRAY[${i}]} |"
+          PEM_DATE=$(date -d ${PEM_DATA[${x}+1]} +'%Y-%m-%d %H:%M:%S')
+          TSV_LINE_PEM+="${PEM_DATA[${x}]}\t$PEM_DATE\t"
+          MD_LINE_PEM+=" ${PEM_DATA[${x}]} | $PEM_DATE |"
+          echo -e $TSV_LINE_PEM >> ./certlist.tsv
+          echo $MD_LINE_PEM >> ./certlist.md
+          CERT_LISTED=$((CERT_LISTED+1))
+          fi
+          done
+          fi
+          done
+          
+          echo " - Cert List mode => JKS"
+          for (( i=0;i<$JKS_COUNT;i++)); do
+          echo "JKS_file ${i}=${JKS_ARRAY[${i}]}"
+          
+          if [[ " ${IGNORE_FILE_ARRAY[*]} " == *"${JKS_ARRAY[${i}]}"* ]]; then
+          echo "IGNORED ${i}: file array contains ${JKS_ARRAY[${i}]}"
+          else
+          JKS_DATA=($(echo | keytool -v -list -keystore ${JKS_ARRAY[${i}]} 2>/dev/null \
+          | grep -i 'Alias name\|Valid' \
+          | sed -e 's/.*name: \(.*\)/\1/' \
+          | sed -e 's/.*until: \(.*\)/\1/'))
+          JKS_DATA_COUNT=${#JKS_DATA[@]}
+          echo "JKS DATA Count= $JKS_DATA_COUNT"
+          
+          for (( x=0;x<$JKS_DATA_COUNT;x+=2 )); do
+          if [[ " ${IGNORE_NAME_ARRAY[*]} " == *"${JKS_DATA[${x}]}"* ]]; then
+          echo "IGNORED ${x}: name array contains ${JKS_DATA[${x}]}"
+          else
+          TSV_LINE_JKS="${JKS_ARRAY[${i}]}\t"
+          MD_LINE_JKS="| ${JKS_ARRAY[${i}]} |"
+          JKS_DATE=$(date -d ${JKS_DATA[${x}+1]} +'%Y-%m-%d %H:%M:%S')
+          TSV_LINE_JKS+="${JKS_DATA[${x}]}\t$JKS_DATE\t"
+          MD_LINE_JKS+=" ${JKS_DATA[${x}]} | $JKS_DATE |"
+          echo -e $TSV_LINE_JKS >> certlist.tsv
+          echo $MD_LINE_JKS >> certlist.md
+          CERT_LISTED=$((CERT_LISTED+1))
+          fi
+          done
+          fi
+          done
+          
+          echo "Cert_List_Count:$CERT_LISTED"
+          if [[ CERT_LISTED -eq 0 ]]; then
+          echo "NO Certficates found" >> certlist.tsv
+          echo "NO Certficates found" >> certlist.MD
+          fi
+          
+          echo "*** TEST CERT TABLES ***"
+          cat certlist.md
+          echo "END - Cert List mode"
+          fi
+          
+          unset IFS
+          echo "LIST END - Cert Scanner"
+
+      - name: Cert Warn or Both Mode 
+        if: ${{ inputs.mode == 'warn' || inputs.mode == 'both' }}
+        shell: bash
+        run: |
+          MODE=${{ inputs.mode }}
+          DAYS=${{ inputs.days }}
+          JIRA_PROJ=${{ inputs.jira }}
+          echo "*** Cert Scanner: Settings ***"
+          echo " - Mode: $MODE"
+          if [[ $MODE = 'warn' || $MODE = 'both' ]]; then
+          echo " - Warning Time (days)  : $DAYS"
+          echo " - Jira Project  : $JIRA_PROJ"
+          fi
+          
+          cd repo_scan
+          echo "Find certs under: " $PWD
+          IFS=$'\n'  
+          JKS_ARRAY=($(find . -type f -name "*.jks" 2>/dev/null))
+          PEM_ARRAY=($(find . -type f \( -name "*.cer" -o -name "*.p12" -o -name "*.pfx" -o -name "*.pem" \) 2>/dev/null))
+          
+          IGNORE_FILE_ARRAY=()
+          while IFS= read -r line; do
+          IGNORE_FILE_ARRAY+=("$line")
+          done < <(grep -v -e "^#" -e "^$" "./.github/workflows/scripts/files/ignore_cert_file.txt")
+          IGNORE_FILE_COUNT=${#IGNORE_FILE_ARRAY[@]}
+          echo "ignore_cert_file_cnt=$IGNORE_FILE_COUNT"
+          IGNORE_NAME_ARRAY=()
+          while IFS= read -r line; do
+          IGNORE_NAME_ARRAY+=("$line")
+          done < <(grep -v -e "^#" -e "^$" "./.github/workflows/scripts/files/ignore_cert_name.txt")
+          IGNORE_NAME_COUNT=${#IGNORE_NAME_ARRAY[@]}
+          echo "ignore_cert_name_cnt=$IGNORE_NAME_COUNT"
+          PEM_COUNT=${#PEM_ARRAY[@]}
+          echo ".PEM files= $PEM_COUNT"
+          JKS_COUNT=${#JKS_ARRAY[@]}
+          echo ".JKS files= $JKS_COUNT"
+          
+          if [[ ($MODE = 'warn' || $MODE = 'both') && $DAYS -ge 0 ]]; then
+          echo "START - Cert Expiry mode"
+          echo " - Start Cert Expiry => PEM"
+          for (( i=0;i<$PEM_COUNT;i++ )); do
+          if [[ " ${IGNORE_FILE_ARRAY[*]} " == *"${PEM_ARRAY[${i}]}"* ]]; then
+          echo "IGNORED ${i}: file array contains ${PEM_ARRAY[${i}]}"
+          else
+          PEM_DATA=($(openssl x509 -noout -subject -enddate -in ${PEM_ARRAY[${i}]} 2>/dev/null \
+          | sed -e 's/.*subject= \(.*\)/\1/' \
+          | sed -e 's/.*notAfter=\(.*\)/\1/' ))
+          
+          PEM_DATA_COUNT=${#PEM_DATA[@]}
+          echo "PEM DATA Count= $PEM_DATA_COUNT"
+          echo "Pem_Array= ${PEM_ARRAY[${i}]}"
+          
+          for (( x=0;x<$PEM_DATA_COUNT;x+=2 )); do
+          if [[ " ${IGNORE_NAME_ARRAY[*]} " == *"${PEM_ARRAY[${i}]}"* ]]; then
+          echo "IGNORED ${x}: name array contains ${PEM_ARRAY[${i}]}"
+          else
+          CERT_NAME_PEM=${PEM_DATA[${x}]}
+          CERT_EXPIRY=$(date -d ${PEM_DATA[${x}+1]} +'%Y-%m-%d %H:%M:%S')
+          echo "name= $CERT_NAME_PEM"
+          echo "certExp= $CERT_EXPIRY"
+          echo "certFile= ${PEM_ARRAY[${i}]}"
+          echo "jiraProj= $JIRA_PROJ"
+          echo "daysExpire= $DAYS"
+          epoch_day=60*60*24
+          epoch_warn=$(( $DAYS*epoch_day ))
+          today_epoch="$(date +%s)"
+          expire_epoch=$(date +%s -d "$CERT_EXPIRY")
+          echo "epoch=$expire_epoch"
+          timeleft=`expr $expire_epoch - $today_epoch`
+          daysleft=$(( timeleft/epoch_day ))
+          echo "time_epoch= $timeleft => days_left= $daysleft"
+          echo '10.250.16.130 jira.apptio.com' | sudo tee -a /etc/hosts
+          if [[ $timeleft -le $epoch_warn ]]; then
+          CERT_WARN="WARNING = ${PEM_ARRAY[${i}]} expires $CERT_EXPIRY (in $daysleft days).  Certificate Name: $CERT_NAME_PEM"
+          echo "****** $CERT_WARN ******"
+          echo "jSearch=${PEM_ARRAY[${i}]}"
+          echo "jProject=$JIRA_PROJ"
+          echo "Starting: Jira search for existing tickets..."
+          curl -D- -u $JIRA_USER:$JIRA_API_TOKEN -X GET -H "Content-Type: application/json" \
+          'https://jira.apptio.com/rest/api/2/search?jql=project%20%3D%20'$JIRA_PROJ'%20AND%20status%20in%20(Open%2C%20"In%20Progress")%20AND%20text%20~%20"'${PEM_ARRAY[${i}]}'"%20AND%20reporter%20in%20(svc_jira-admin)&fields=id,key,summary' \
+          | grep "{" > tempJira.json
+          BUG_EXISTS=$(jq '.issues | length' tempJira.json)
+          BUG_KEY=$(jq '.issues[0].key' tempJira.json)
+          rm tempJira.json
+          if [[ $BUG_EXISTS -eq 0 ]]; then
+          echo "No open bugs ($BUG_EXISTS found) - create ticket."
+          else
+          echo "Open bug found - $BUG_KEY - no ticket needed."
+          fi
+          if [[ $BUG_EXISTS -eq 0 ]]; then
+          SUMMARY="GH Cert Scan: Warning Cert: ${PEM_ARRAY[${i}]} - Expiring soon."
+          echo "sum= $SUMMARY"
+          DATA='{"fields":{"project":{"key": "'$JIRA_PROJ'"},"summary":"'
+          DATA+=${SUMMARY}
+          DATA+='","description": "'
+          DATA+=${CERT_WARN}
+          DATA+='","issuetype": {"name": "Bug"}}}'
+          echo "data= $DATA"
+          curl -D- -u $JIRA_USER:$JIRA_API_TOKEN -X POST --data "$DATA" -H "Content-Type: application/json" https://jira.apptio.com/rest/api/2/issue/
+          fi
+          else
+          echo "******* NO CERT EXPIRY DETECTED - Expires in $daysleft days ******"
+          fi
+          fi
+          done
+          fi
+          done
+          echo " END: Cert Expiry => PEM"
+          
+          echo " - Start Cert Expiry => JKS"
+          for (( i=0;i<$JKS_COUNT;i++ )); do        
+          if [[ " ${IGNORE_FILE_ARRAY[*]} " == *"${JKS_ARRAY[${i}]}"* ]]; then
+          echo "IGNORED ${i}: file array contains ${JKS_ARRAY[${i}]}"
+          else
+          JKS_DATA=($(echo | keytool -v -list -keystore ${JKS_ARRAY[${i}]} 2>/dev/null \
+          | grep -i 'Alias name\|Valid' \
+          | sed -e 's/.*name: \(.*\)/\1/' \
+          | sed -e 's/.*until: \(.*\)/\1/'))
+          JKS_DATA_COUNT=${#JKS_DATA[@]}
+          echo "JKS DATA Count= $JKS_DATA_COUNT"
+          for (( x=0;x<JKS_DATA_COUNT;x+=2 )); do
+          if [[ " ${IGNORE_NAME_ARRAY[*]} " == *"${JKS_DATA[${x}]}"* ]]; then
+          echo "IGNORED ${x}: name array contains ${JKS_DATA[${x}]}"
+          else
+          CERT_NAME_JKS=${JKS_DATA[${x}]}
+          CERT_EXPIRY=$(date -d ${JKS_DATA[${x}+1]} +'%Y-%m-%d %H:%M:%S')
+          echo "name= $CERT_NAME_JKS"
+          echo "certExp= $CERT_EXPIRY"
+          echo "certFile= ${JKS_ARRAY[${i}]}"
+          echo "jiraProj= $JIRA_PROJ"
+          echo "daysExpire= $DAYS"
+          epoch_day=60*60*24
+          epoch_warn=$(( $DAYS*epoch_day ))
+          today_epoch="$(date +%s)"
+          expire_epoch=$(date +%s -d "$CERT_EXPIRY")
+          echo "epoch=$expire_epoch"
+          timeleft=`expr $expire_epoch - $today_epoch`
+          daysleft=$(( timeleft/epoch_day ))
+          echo "time_epoch= $timeleft => days_left= $daysleft"
+          echo '10.250.16.130 jira.apptio.com' | sudo tee -a /etc/hosts
+          if [[ $timeleft -le $epoch_warn ]]; then
+          CERT_WARN="WARNING = ${JKS_ARRAY[${i}]} expires $CERT_EXPIRY (in $daysleft days).  Certificate Name: $CERT_NAME_JKS"
+          echo "****** $CERT_WARN ******"
+          echo "jSearch=${JKS_ARRAY[${i}]}"
+          echo "jProject=$JIRA_PROJ"
+          echo "Starting: Jira search for existing tickets..."
+          curl -D- -u $JIRA_USER:$JIRA_API_TOKEN -X GET -H "Content-Type: application/json" \
+          'https://jira.apptio.com/rest/api/2/search?jql=project%20%3D%20'$JIRA_PROJ'%20AND%20status%20in%20(Open%2C%20"In%20Progress")%20AND%20text%20~%20"'${JKS_ARRAY[${i}]}'"%20AND%20reporter%20in%20(svc_jira-admin)&fields=id,key,summary' \
+          | grep "{" > tempJira.json
+          BUG_EXISTS=$(jq '.issues | length' tempJira.json)
+          BUG_KEY=$(jq '.issues[0].key' tempJira.json)
+          rm tempJira.json
+          if [[ $BUG_EXISTS -eq 0 ]]; then
+          echo "No open bugs ($BUG_EXISTS found) - create ticket."
+          else
+          echo "Open bug found - $BUG_KEY - no ticket needed."
+          fi
+          if [[ $BUG_EXISTS -eq 0 ]]; then
+          SUMMARY="GH Cert Scan: Warning Cert: ${JKS_ARRAY[${i}]} - Expiring soon."
+          echo "sum= $SUMMARY"
+          DATA='{"fields":{"project":{"key": "'$JIRA_PROJ'"},"summary":"'
+          DATA+=${SUMMARY}
+          DATA+='","description": "'
+          DATA+=${CERT_WARN}
+          DATA+='","issuetype": {"name": "Bug"}}}'
+          echo "data= $DATA"
+          curl -D- -u $JIRA_USER:$JIRA_API_TOKEN -X POST --data "$DATA" -H "Content-Type: application/json" https://jira.apptio.com/rest/api/2/issue/
+          fi
+          else
+          echo "******* NO CERT EXPIRY DETECTED - Expires in $daysleft days ******"
+          fi
+          fi
+          done
+          fi
+          done
+          echo " END: Cert Expiry => JKS"
+          echo " END - Cert Expiry mode"
+          fi
+          echo " WARN END - Cert Expiry mode"
+
+
+      # Upload Cert Table to Scanned Repo (view certlist.md in UI)
+      - name: Cert Table - Commit & Push
+        if: ${{ inputs.mode == 'list' || inputs.mode == 'both' }}
+        continue-on-error: true  # ignore failed commit if no changes detected
+        run: |
+          cd $GITHUB_WORKSPACE/repo_scan
+          git config --local user.name github-actions
+          git config --local user.email github-actions@github.com
+          git add --all
+          git commit -m "update cert table"
+          git push

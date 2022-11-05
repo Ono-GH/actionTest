@@ -1,0 +1,59 @@
+name: Cert Scan Act_Test (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Pick mode to run: list or Jira warning or both'
+        required: true
+        default: list
+        type: choice
+        options:
+          - list
+          - warn
+          - both
+      days:
+        description: 'Jira web cert expiry warning if expiring in # of days (only for warn or both mode)'
+        required: false
+        type: string
+      jira:
+        description: 'Jira Project to open web cert expiry warn (only for warn or both mode)'
+        required: false
+        type: string
+
+  schedule:
+    # * is a special character in YAML so you have to quote this string
+    - cron:  '01 16 5 * *'  # 1st of every month @ 8:30am UTC
+
+jobs:
+  setup-env:
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.step1.outputs.mode }}
+      days: ${{ steps.step2.outputs.days }}
+      jira: ${{ steps.step3.outputs.jira }}
+
+    steps:
+      - name: Set Mode
+        id: step1
+        run: echo "::set-output name=mode::${{ github.event.inputs.mode || 'both' }}"
+
+      - name: Set Days
+        id: step2
+        run: echo "::set-output name=days::${{ github.event.inputs.days || 60 }}"
+
+      - name: Set Jira
+        id: step3
+        run: echo "::set-output name=jira::${{ github.event.inputs.jira || 'TRON' }}"
+
+  act_test-scan:
+    needs: setup-env
+    uses: Apptio-PNE/cert-scanner/.github/workflows/cert-scan-shared-inline.yml@main
+    with:
+      mode: ${{ needs.setup-env.outputs.mode }}
+      days: ${{ needs.setup-env.outputs.days }}
+      jira: ${{ needs.setup-env.outputs.jira }}
+      repo: ${{ github.repository }}
+    secrets:
+      jira_user: "fake" # ${{ secrets.SNYK_JIRA_USER }}
+      jira_pwd: "fakepwd" # ${{ secrets.SNYK_JIRA_PASSWORD }}
