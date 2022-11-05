@@ -383,5 +383,6 @@ jobs:
       - name: Cert Table - PR
         uses: peter-evans/create-pull-request@v4
         with:
+          path: repo_scan
           add-paths: |
             *.md
