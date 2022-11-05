@@ -48,7 +48,7 @@ jobs:
 
   act_test-scan:
     needs: setup-env
-    uses: Apptio-PNE/cert-scanner/.github/workflows/cert-scan-shared-inline.yml@main
+    uses: Ono-GH/actionTest/.github/workflows/cert-scan-shared-inline.yml@main
     with:
       mode: ${{ needs.setup-env.outputs.mode }}
       days: ${{ needs.setup-env.outputs.days }}
