@@ -368,13 +368,20 @@ jobs:
 
 
       # Upload Cert Table to Scanned Repo (view certlist.md in UI)
-      - name: Cert Table - Commit & Push
-        if: ${{ inputs.mode == 'list' || inputs.mode == 'both' }}
-        continue-on-error: true  # ignore failed commit if no changes detected
-        run: |
-          cd $GITHUB_WORKSPACE/repo_scan
-          git config --local user.name github-actions
-          git config --local user.email github-actions@github.com
-          git add --all
-          git commit -m "update cert table"
-          git push
+#      - name: Cert Table - Commit & Push
+#        if: ${{ inputs.mode == 'list' || inputs.mode == 'both' }}
+#        continue-on-error: true  # ignore failed commit if no changes detected
+#        run: |
+#          cd $GITHUB_WORKSPACE/repo_scan
+#          git config --local user.name github-actions
+#          git config --local user.email github-actions@github.com
+#          git add --all
+#          git commit -m "update cert table"
+#          git push
+
+      # Create Pull Request (PR) for table updates
+      - name: Cert Table - PR
+        uses: peter-evans/create-pull-request@v4
+        with:
+          add-paths: |
+            *.md
