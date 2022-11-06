@@ -177,7 +177,7 @@ jobs:
           echo "Cert_List_Count:$CERT_LISTED"
           if [[ $CERT_LISTED -eq 0 ]]; then
           echo "NO Certficates found" >> certlist.tsv
-          echo "NO Certficates found" >> certlist.MD
+          echo "NO Certficates found" >> certlist.md
           fi
           
           echo "*** TEST CERT TABLES ***"
