@@ -104,6 +104,8 @@ jobs:
           echo ".PEM files= $PEM_COUNT"
           JKS_COUNT=${#JKS_ARRAY[@]}
           echo ".JKS files= $JKS_COUNT"
+          
+          cd repo_scan  # ****** TEMP TEST: no cert case ******
         
           CERT_LISTED=0
           if [[ $MODE = 'list' || $MODE = 'both' ]]; then
@@ -173,7 +175,7 @@ jobs:
           done
           
           echo "Cert_List_Count:$CERT_LISTED"
-          if [[ CERT_LISTED -eq 0 ]]; then
+          if [[ $CERT_LISTED -eq 0 ]]; then
           echo "NO Certficates found" >> certlist.tsv
           echo "NO Certficates found" >> certlist.MD
           fi
