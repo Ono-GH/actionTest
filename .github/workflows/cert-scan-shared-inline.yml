@@ -82,7 +82,7 @@ jobs:
           echo " - Jira Project  : $JIRA_PROJ"
           fi
           
-          cd repo_scan/.github/workflows  # ****** TEMP TEST: no cert case ******
+          cd repo_scan
           echo "Find certs under: " $PWD
           IFS=$'\n'  
           JKS_ARRAY=($(find . -type f -name "*.jks" 2>/dev/null))
@@ -104,9 +104,7 @@ jobs:
           echo ".PEM files= $PEM_COUNT"
           JKS_COUNT=${#JKS_ARRAY[@]}
           echo ".JKS files= $JKS_COUNT"
-          
-          cd ../..  # ****** TEMP TEST: no cert case ******
-        
+                  
           CERT_LISTED=0
           if [[ $MODE = 'list' || $MODE = 'both' ]]; then
           echo "START - Cert List mode"
