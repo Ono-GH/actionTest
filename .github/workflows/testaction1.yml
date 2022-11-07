@@ -49,7 +49,7 @@ jobs:
           
       - name: Output Mode
         run: |
-          echo "Mode=${mod}e"
+          echo "Mode=${mode}"
 
       #- name: Test days
       #  if: ${{ ${mode} == 'list' || ${mode} == 'mode' }}
