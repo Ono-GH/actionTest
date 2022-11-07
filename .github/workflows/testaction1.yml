@@ -49,11 +49,11 @@ jobs:
           
       - name: Output Mode
         run: |
-          echo "Mode=$mode"
+          echo "Mode=${mod}e"
 
-      - name: Test days
-        if: ${{ ${mode} == 'list' || ${mode} == 'mode' }}
-        run: echo "MODE=$mode"
+      #- name: Test days
+      #  if: ${{ ${mode} == 'list' || ${mode} == 'mode' }}
+      #  run: echo "MODE=$mode"
 
       # Runs a single command using the runners shell
       - name: Run a one-line script
