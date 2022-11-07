@@ -12,6 +12,15 @@ on:
 
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
+    inputs:
+      mode:
+        description: 'mode to test'
+        type: choice
+        default: "both"
+        options:
+          - "list"
+          - "both"
+          - "nada"
   
 env:
   G_ENV: "Global Env"
@@ -33,6 +42,18 @@ jobs:
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       # TEMP OFF - uses: actions/checkout@v2
+
+      - name: Set Web Mode & Days
+        run: |
+          echo "mode=${{ github.event.inputs.mode || "list" }}" >> $GITHUB_OUTPUT
+          
+      - name: Output Mode
+        run: |
+          echo "Days=$mode"
+
+      - name: Test days
+        if: ${{ $mode == 'list' || $mode == 'mode' }}
+        run: echo "MODE=$mode"
 
       # Runs a single command using the runners shell
       - name: Run a one-line script
