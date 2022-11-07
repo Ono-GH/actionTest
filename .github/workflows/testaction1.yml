@@ -45,11 +45,11 @@ jobs:
 
       - name: Set Web Mode & Days
         run: |
-          echo "mode=${{ github.event.inputs.mode || "list" }}" >> $GITHUB_OUTPUT
+          echo "::set-output name=mode::${{ github.event.inputs.mode || 'both' }}"
           
       - name: Output Mode
         run: |
-          echo "Days=$mode"
+          echo "Mode=$mode"
 
       - name: Test days
         if: ${{ $mode == 'list' || $mode == 'mode' }}
