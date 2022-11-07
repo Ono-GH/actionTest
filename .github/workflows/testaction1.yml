@@ -52,7 +52,7 @@ jobs:
           echo "Mode=${MODE}"
 
       - name: Test days
-        if: ${{ ${MODE} == 'list' || ${MODE} == 'default' }}
+        if: ${{ MODE == 'list' || MODE == 'default' }}
         run: echo "Mode=${MODE}"
 
       # Runs a single command using the runners shell
