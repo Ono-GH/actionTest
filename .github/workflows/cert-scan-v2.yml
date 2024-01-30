@@ -213,14 +213,10 @@ jobs:
           #   - mode: 'list' only | 'warn' only | 'both' (list & warn)
           #   - days: # of days before warning of expiring cert (only for warn | both mode)
           #   - jira: jira project to open ticket for (only for warn | both mode)
-          while getopts "m:d:j:" options; do
-            case "${options}" in
           
-            m) MODE=${OPTARG} ;;
-            d) DAYS=${OPTARG} ;;
-            j) JIRA_PROJ=${OPTARG} ;;
-            esac
-          done
+          MODE=${{ inputs.mode }}
+          DAYS=${{ inputs.days }}
+          JIRA_PROJ=${{ inputs.jira }}
           
           echo "*** Cert Scanner: Settings ***"
           echo " - Mode: $MODE"
