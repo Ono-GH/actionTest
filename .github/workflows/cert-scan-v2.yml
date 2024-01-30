@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@latest
+      - uses: actions/checkout@v4
 
       - name: Run a multi-line script with a function
         run: |
