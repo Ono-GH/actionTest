@@ -50,10 +50,427 @@ jobs:
 
       - name: Run a multi-line script with a function
         run: |
-          # Define a bash function
-          function say_hello() {
-            echo "Hello, $1"
+          # Cert-Scan-Tool.sh = Certificate scanner (.jks or .pem types) - List and/or Warn of expiring certs in a GitHub repo.
+          #   Can operate in 3 modes:
+          #     1) l = List: all certs in a table
+          #     2) w = Warning: Find any expiring certs and notify via Jira ticket
+          #     3) b = Both List & Warning modes
+          #   Examples:
+          #     - list mode only => ./cert-scan-tool.sh -m list   # creates GH .md file & checks in (local .tsv to open in excel)
+          #     - warning mode   => ./cert-scan-tool.sh -m warn -d 50 -j CCM   # warn if expires within 50 days and open Jira in CCM project
+          #     - warning mode   => ./cert-scan-tool.sh -m both -d 50 -j CCM
+          #
+          #   Ignoring Certs (optional) = In your repo, under: .github/workflows/scripts/files/
+          #     - Avoid listing & Jira warnings
+          #     - ignore_cert_file.txt => ignore list of cert files
+          #     - ignore_cert_name.txt => ignore list of cert names
+          
+          ### Jira Creds (GH Action: use Service Account via Secrets | local: use your creds - set env var)
+          # JIRA_USER="<your_alias>" # Edit: Your Apptio alias
+          # JIRA_API_TOKEN= your Jira pwd => set in cmd window (not in code) Ex: export JIRA_API_TOKEN=abc123 then run script in same window
+          
+          ### Jira Service account (jira.apptio.com only) = Passed in Runner Env Variable (see cert-scanner.yml)
+          
+          ### Date Expiry Function
+          # - Function params (required): 1) Cert name 2) Cert expiry date 3) Cert filename w/ path 4) Cert type (PEM or JKS)
+          # - Script param:
+          #   - $JIRA_PROJ = which Jira project to create ticket under (script param: -j <proj>)
+          #   - $DAYS = if cert expires with this number of days, create Jira ticket (script param: -d <int>)
+          cert_expiry_check() {
+            #Param check
+            echo "name= $1"
+            echo "certExp= $2"
+            echo "certFile= $3"
+            echo "certType= $4"
+            echo "jiraProj= $JIRA_PROJ"
+            echo "daysExpire= $DAYS"
+          
+            #setup dates
+            epoch_day=60*60*24 #sec*min*hour
+            epoch_warn=$(($DAYS * epoch_day))
+            # echo "epoch warn=$epoch_warn"
+          
+            today_epoch="$(date +%s)"
+            # echo "today=$today_epoch"
+          
+            if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+              expire_epoch=$(date +%s -d "$2")  # For LINUX (GH Runners)
+            elif [[ "$OSTYPE" == "darwin"* ]]; then
+              # For BSD/MacOS - VERSION of DATE (PEM & JKS need diff format conversion)
+              if [[ $4 = "PEM" ]]; then
+                expire_epoch=$(date -j -f "%b %d %T %Y %Z" "$2" "+%s")
+              else
+                expire_epoch=$(date -j -f "%a %b %d %T %Z %Y" "$2" "+%s")
+              fi
+            else
+              echo "ERROR: OS type is not recognized."  # Unknown OS
+            fi
+          
+            echo "epoch=$expire_epoch"
+          
+            timeleft=$(expr $expire_epoch - $today_epoch)
+            daysleft=$((timeleft / epoch_day))
+            echo "time_epoch= $timeleft => days_left= $daysleft"
+          
+            # Set Jira access from GH Runner box
+            if [ -n "$RUNNER_OS" ]; then
+              echo "Running on GitHub runner with OS: $RUNNER_OS"
+              echo '10.250.16.130 jira.apptio.com' | sudo tee -a /etc/hosts   # JIRA PROD: ONLY for GH Self-Hosted runner (comment for local on VPN)
+            else
+              echo "Running locally"
+              # Possible local setup: if traceroute jira.apptio.com shows:
+              # (GOOD) => traceroute to jira.apptio.com (10.250.16.130)  # no local setup needed
+              # (BAD) ==> traceroute to www.tm.nam.proxy-1.appproxy.trafficmanager.net (40.122.165.147)
+              #   - FIX = In /etc/hosts file: Add entry '10.250.16.130 jira.apptio.com'   # Allows JIRA access via jira api cmd line
+            fi
+          
+            if [[ $timeleft -le $epoch_warn ]]; then
+              CERT_WARN="WARNING = $3 expires $2 (in $daysleft days).  Certificate Name: $1"
+              echo "****** $CERT_WARN ******"
+              # Call Jira_Check function - Check if ticket already exists
+              jira_check $3 $JIRA_PROJ
+          
+              # Only create Jira ticket if Jira_check sets BUG_EXISTS=0 (no open tickets for cert file)
+              if [[ $BUG_EXISTS -eq 0 ]]; then
+                SUMMARY="GH Cert Scan: Warning Cert: $3 - Expiring soon."
+                echo "sum= $SUMMARY"
+          
+                # Call json_escape function - Escape potential special char (minimize breaking JSON syntax in JIRA API call)
+                #  - parameter is just the variable name (intentional: not the value $summary)
+                json_escape SUMMARY
+                json_escape CERT_WARN
+          
+                DATA='{"fields":{"project":{"key": "'$JIRA_PROJ'"},"summary":"'
+                DATA+=${SUMMARY}
+                DATA+='","description": "'
+                DATA+=${CERT_WARN}
+          
+                if [[ $JIRA_PROJ == "PRE" || $JIRA_PROJ == "GOVUSA" ]]; then
+                  # Required Field: "Requesting Team" (aka: customfield_16031) must be provided for ticket creation (set to PRE team)
+                  DATA+='","customfield_16031":{"value":"PRE"},"issuetype": {"name": "Bug"}}}'
+                else
+                  DATA+='","issuetype": {"name": "Bug"}}}'
+                fi
+          
+                echo "data= $DATA"
+                # JIRA SANDBOX (jira-s) - OFF lost access
+                # curl -D- -u $JIRA_USER:$JIRA_API_TOKEN -X POST --data "$DATA" -H "Content-Type: application/json" https://jira-s.apptio.com/rest/api/2/issue/
+                #JIRA PROD - ON
+                curl -D- -u $JIRA_USER:$JIRA_API_TOKEN -X POST --data "$DATA" -H "Content-Type: application/json" https://jira.apptio.com/rest/api/2/issue/
+              fi
+            else
+              echo "******* NO CERT EXPIRY DETECTED - Expires in $daysleft days ******"
+            fi
           }
+          
+          ### Check if Jira ticket exists
+          # - Jira Search:
+          #   - Project(team like TRON), Status ('open' or 'in progress'),
+          #   - Reporter (svc_jira-admin // service account), Summary contains Cert file
+          # - Returns: set env variable BUG_EXISTS (0 = no ticket exists)
+          jira_check() {
+            #Param check
+            echo "jSearch=$1" # search Jira for Cert file path (cert name likely contains chars that need URL encoding to properly search Jira)
+            echo "jProject=$JIRA_PROJ"
+          
+            echo "Starting: Jira search for existing tickets..."
+            # Query Jira and extract data in response - pipe to .json file to
+            # JIRA PROD (use srv accnt) - OFF for testing
+            curl -D- -s -u $JIRA_USER:$JIRA_API_TOKEN -X GET -H "Content-Type: application/json" \
+             'https://jira.apptio.com/rest/api/2/search?jql=project%20%3D%20'$JIRA_PROJ'%20AND%20status%20not%20in%20(Done%2C%20Closed%2C%20Completed)%20AND%20text%20~%20"'$1'"&fields=id,key,summary' \
+              | grep "{" > tempJira.json
+          
+            # JIRA SANDBOX (jira-s) = Test env (local access - use your account)
+          #  curl -D- -u $JIRA_USER:$JIRA_API_TOKEN -X GET -H "Content-Type: application/json" \
+          #    'https://jira-s.apptio.com/rest/api/2/search?jql=project%20%3D%20'$JIRA_PROJ'%20AND%20sstatus%20not%20in%20(Done%2C%20Closed%2C%20Completed)%20AND%20text%20~%20"'$1'"&fields=id,key,summary' |
+          #    grep "{" >tempJira.json
+          
+            BUG_EXISTS=$(jq '.issues | length' tempJira.json)
+            BUG_KEY=$(jq '.issues[0].key' tempJira.json)
+            rm tempJira.json # clean up
+          
+            if [[ $BUG_EXISTS -eq 0 ]]; then
+              echo "No open bugs ($BUG_EXISTS found) - create ticket."
+            else
+              echo "Open/Existing bug found - $BUG_KEY - no new ticket needed."
+            fi
+          }
+          
+          ### JSON Escaper
+          # Use Python json tool to escape special characters
+          # Trick is the global variable calling this function varies and need to dynamically update
+          # the local variable along with the eval is how to assign the new value to the corresponding global variable
+          json_escape() {
+            local esc_local="$1"
+            echo "Value to 'escape'=${!esc_local}"
+            eval "$esc_local=\$(printf '%s' \"\$$esc_local\" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read())[1:-1])')"
+            echo "Value after esc  =${!esc_local}"
+          }
+          
+          
+          ##########     *****     START CERT SCANNER     *****     ##########
+          ### Detect params to run
+          #   - mode: 'list' only | 'warn' only | 'both' (list & warn)
+          #   - days: # of days before warning of expiring cert (only for warn | both mode)
+          #   - jira: jira project to open ticket for (only for warn | both mode)
+          while getopts "m:d:j:" options; do
+            case "${options}" in
+          
+            m) MODE=${OPTARG} ;;
+            d) DAYS=${OPTARG} ;;
+            j) JIRA_PROJ=${OPTARG} ;;
+            esac
+          done
+          
+          echo "*** Cert Scanner: Settings ***"
+          echo " - Mode: $MODE"
+          if [[ $MODE = 'warn' || $MODE = 'both' ]]; then
+            echo " - Warning Time (days)  : $DAYS"
+            echo " - Jira Project  : $JIRA_PROJ"
+          fi
+          
+          # LOCAL CONFIG SECTION - control where scanner runs
+          # DEFAULT (cur dir) = Hack dir (BIIT)
+          # cd /Users/OPerzia/git2/apptio-bi/tron_gh/tron  #TRON (pem only)
+          # cd /Users/OPerzia/git2/ccm/cloud-service       #CCM (jks & pem)
+          # cd /Users/OPerzia/git2/apptio-bi/ssr/ssa-app   #SSA (2 pem)
+          #cd ~/code/other/cert-scanner                     # Test - Cert-Scan
+          #cd /Users/OPerzia/git2/cic/puppet               # Puppet w/ Certs
+          cd /Users/operzia/code/other/apptio-certs       # Apptio Cert repo
+          echo "Find certs under: " $PWD
+          
+          IFS=$'\n' # IFS: Allow splitting files found to be 1/line in array
+          # Find all .P12 variations & .JKS files in repo
+          JKS_ARRAY=($(find . -type f -name "*.jks" 2>/dev/null))
+          PEM_ARRAY=($(find . -type f \( -name "*.cer" -o -name "*.p12" -o -name "*.pfx" -o -name "*.pem" \) 2>/dev/null))
+          
+          # Load Ignore Cert File Array
+          IGNORE_FILE_ARRAY=()
+          
+          # grep all lines that do not start with # or blank line
+          while IFS= read -r line; do
+            IGNORE_FILE_ARRAY+=("$line")
+          done < <(grep -v -e "^#" -e "^$" "./.github/workflows/scripts/files/ignore_cert_file.txt")
+          
+          IGNORE_FILE_COUNT=${#IGNORE_FILE_ARRAY[@]}
+          echo "ignore_cert_file_cnt=$IGNORE_FILE_COUNT"
+          
+          # Load Ignore Cert Name Array
+          IGNORE_NAME_ARRAY=()
+          
+          # grep all lines that do not start with # or blank line
+          while IFS= read -r line; do
+            IGNORE_NAME_ARRAY+=("$line")
+          done < <(grep -v -e "^#" -e "^$" "./.github/workflows/scripts/files/ignore_cert_name.txt")
+          
+          IGNORE_NAME_COUNT=${#IGNORE_NAME_ARRAY[@]}
+          echo "ignore_cert_name_cnt=$IGNORE_NAME_COUNT"
+          
+          # get number of elements in the array
+          PEM_COUNT=${#PEM_ARRAY[@]}
+          echo ".PEM files= $PEM_COUNT"
+          JKS_COUNT=${#JKS_ARRAY[@]}
+          echo ".JKS files= $JKS_COUNT"
+          
+          # WARNING MODE: Find certs expiring under X days from now
+          if [[ ($MODE = 'warn' || $MODE = 'both') && $DAYS -ge 0 ]]; then
+            echo "START - Cert Expiry mode"
+            echo " - Start Cert Expiry => PEM"
+            # For each PEM file: extract name (subject) & expiry date (enddate) & build table
+            for ((i = 0; i < $PEM_COUNT; i++)); do
+              # Check if cert file is to be ignored
+              if [[ " ${IGNORE_FILE_ARRAY[*]} " == *"${PEM_ARRAY[${i}]}"* ]]; then
+                echo "IGNORED ${i}: file array contains ${PEM_ARRAY[${i}]}"
+              else
+                PEM_DATA=($(openssl x509 -noout -subject -enddate -in ${PEM_ARRAY[${i}]} 2>/dev/null |
+                  sed -e 's/.*subject= \(.*\)/\1/' |
+                  sed -e 's/.*notAfter=\(.*\)/\1/'))
+          
+                PEM_DATA_COUNT=${#PEM_DATA[@]}
+                echo "PEM DATA Count= $PEM_DATA_COUNT"
+                echo "Pem_Array= ${PEM_ARRAY[${i}]}"
+          
+                # Cert Data extracted in pairs (subject & enddate) => loop counter x+=2
+                for ((x = 0; x < $PEM_DATA_COUNT; x += 2)); do
+                  # Check if cert name is to be ignored
+                  if [[ " ${IGNORE_NAME_ARRAY[*]} " == *"${PEM_ARRAY[${i}]}"* ]]; then
+                    echo "IGNORED ${x}: name array contains ${PEM_ARRAY[${i}]}"
+                  else
+                    CERT_NAME_PEM=${PEM_DATA[${x}]}
+                    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+                      # For LINUX (GH Runners)
+                      CERT_EXPIRY=$(date -d ${PEM_DATA[${x} + 1]} +'%Y-%m-%d %H:%M:%S')
+                    elif [[ "$OSTYPE" == "darwin"* ]]; then
+                      # For BSD/MacOS - VERSION of DATE (PEM & JKS need diff format conversion)
+                      CERT_EXPIRY=${PEM_DATA[${x} + 1]}
+                    else
+                      # Unknown
+                      echo "ERROR: OS type is not recognized."
+                    fi
+                    cert_expiry_check $CERT_NAME_PEM $CERT_EXPIRY ${PEM_ARRAY[${i}]} PEM
+                  fi
+                done
+              fi
+            done
+            echo " END: Cert Expiry => PEM"
+          
+            # For each JKS file: extract name (subject) & expiry date (enddate) & build table
+            echo " - Start Cert Expiry => JKS"
+            for ((i = 0; i < $JKS_COUNT; i++)); do
+              # Check if cert file is to be ignored
+              if [[ " ${IGNORE_FILE_ARRAY[*]} " == *"${JKS_ARRAY[${i}]}"* ]]; then
+                echo "IGNORED ${i}: file array contains ${JKS_ARRAY[${i}]}"
+              else
+                JKS_DATA=($(echo | keytool -v -list -keystore ${JKS_ARRAY[${i}]} 2>/dev/null |
+                  grep -i 'Alias name\|Valid' |
+                  sed -e 's/.*name: \(.*\)/\1/' |
+                  sed -e 's/.*until: \(.*\)/\1/'))
+          
+                JKS_DATA_COUNT=${#JKS_DATA[@]}
+                echo "JKS DATA Count= $JKS_DATA_COUNT"
+          
+                # Cert Data extracted in pairs (subject & enddate) => loop counter x+=2
+                for ((x = 0; x < JKS_DATA_COUNT; x += 2)); do
+                  # Check if cert name is to be ignored
+                  if [[ " ${IGNORE_NAME_ARRAY[*]} " == *"${JKS_DATA[${x}]}"* ]]; then
+                    echo "IGNORED ${x}: name array contains ${JKS_DATA[${x}]}"
+                  else
+                    CERT_NAME_JKS=${JKS_DATA[${x}]}
+                    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+                      # For LINUX (GH Runners)
+                      CERT_EXPIRY=$(date -d ${JKS_DATA[${x} + 1]} +'%Y-%m-%d %H:%M:%S')
+                    elif [[ "$OSTYPE" == "darwin"* ]]; then
+                      # For BSD/MacOS - VERSION of DATE (PEM & JKS need diff format conversion)
+                      CERT_EXPIRY=${JKS_DATA[${x} + 1]}
+                    else
+                      # Unknown
+                      echo "ERROR: OS type is not recognized."
+                    fi
+                    cert_expiry_check $CERT_NAME_JKS $CERT_EXPIRY ${JKS_ARRAY[${i}]} JKS
+                  fi
+                done
+              fi
+            done
+            echo " END: Cert Expiry => JKS"
+            echo " END - Cert Expiry mode"
+          fi
+          
+          ### LIST MODE ###
+          if [[ $MODE = 'list' || $MODE = 'both' ]]; then
+            echo "START - Cert List mode - Output File: ${PWD}"
+            # Create file and headers (tsv & md formats)
+            echo -e "Path: Cert File\tCert Name\tExpiry Date" >./certlist.tsv
+            echo "| Path: Cert File | Cert Name | Expiry Date |" >./certlist.md
+            echo "| --------------- | --------- | ----------- |" >>./certlist.md
+          
+            # For each PEM file: extract name (subject) & expiry date (enddate) & build table
+            echo " - Cert List mode => PEM"
+            for ((i = 0; i < $PEM_COUNT; i++)); do
+              echo "PEM_file=${PEM_ARRAY[${i}]}"
+              # Check if cert file is to be ignored
+              if [[ " ${IGNORE_FILE_ARRAY[*]} " == *"${PEM_ARRAY[${i}]}"* ]]; then
+                echo "IGNORED ${i}: file array contains ${PEM_ARRAY[${i}]}"
+              else
+                PEM_DATA=($(openssl x509 -noout -subject -enddate -in ${PEM_ARRAY[${i}]} 2>/dev/null |
+                  sed -e 's/.*subject= \(.*\)/\1/' |
+                  sed -e 's/.*notAfter=\(.*\)/\1/'))
+          
+                PEM_DATA_COUNT=${#PEM_DATA[@]}
+                echo "PEM DATA Count= $PEM_DATA_COUNT"
+                # Cert Data extracted in pairs (subject & enddate) => loop counter x+=2
+                for ((x = 0; x < $PEM_DATA_COUNT; x += 2)); do
+                  # Check if cert name is to be ignored
+                  if [[ " ${IGNORE_NAME_ARRAY[*]} " == *"${PEM_ARRAY[${i}]}"* ]]; then
+                    echo "IGNORED ${x}: name array contains ${PEM_ARRAY[${i}]}"
+                  else
+                    # Build new line with cert file
+                    TSV_LINE_PEM="${PEM_ARRAY[${i}]}\t"
+                    MD_LINE_PEM="| ${PEM_ARRAY[${i}]} |"
+          
+                    # Standardize cert expiry date (pem & jks differ)
+                    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+                      # For LINUX (GH Runners)
+                      PEM_DATE=$(date -d ${PEM_DATA[${x} + 1]} +'%Y-%m-%d %H:%M:%S')
+                    elif [[ "$OSTYPE" == "darwin"* ]]; then
+                      # For BSD/MacOS - VERSION of DATE (PEM & JKS need diff format conversion)
+                      PEM_DATE=$(date -j -f "%b %d %T %Y %Z" "${PEM_DATA[${x} + 1]}" "+%F %T")
+                    else
+                      # Unknown
+                      echo "ERROR: OS type is not recognized."
+                    fi
+          
+                    # Add Cert data: subject & expiry date
+                    TSV_LINE_PEM+="${PEM_DATA[${x}]}\t$PEM_DATE\t"
+                    MD_LINE_PEM+=" ${PEM_DATA[${x}]} | $PEM_DATE |"
+          
+                    # Append finished line to files
+                    echo -e $TSV_LINE_PEM >>./certlist.tsv
+                    echo $MD_LINE_PEM >>./certlist.md
+                  fi
+                done
+              fi
+            done
+          
+            # For each JKS file: extract name (subject) & expiry date (enddate) & build table
+            echo " - Cert List mode => JKS"
+            for ((i = 0; i < $JKS_COUNT; i++)); do
+              echo "JKS_file ${i}=${JKS_ARRAY[${i}]}"
+              # Check if cert file is to be ignored
+              if [[ " ${IGNORE_FILE_ARRAY[*]} " == *"${JKS_ARRAY[${i}]}"* ]]; then
+                echo "IGNORED ${i}: file array contains ${JKS_ARRAY[${i}]}"
+              else
+                # Date conversion JKS: date -j -f "%a %b %d %T %Z %Y" "Mon Dec 27 07:00:56 PST 2027" "+%F %T %Z"
+                JKS_DATA=($(echo | keytool -v -list -keystore ${JKS_ARRAY[${i}]} 2>/dev/null |
+                  grep -i 'Alias name\|Valid' |
+                  sed -e 's/.*name: \(.*\)/\1/' |
+                  sed -e 's/.*until: \(.*\)/\1/'))
+          
+                JKS_DATA_COUNT=${#JKS_DATA[@]}
+                echo "JKS DATA Count= $JKS_DATA_COUNT"
+                # Cert Data extracted in pairs (subject & enddate) => loop counter x+=2
+                for ((x = 0; x < $JKS_DATA_COUNT; x += 2)); do
+                  # Check if cert name is to be ignored
+                  if [[ " ${IGNORE_NAME_ARRAY[*]} " == *"${JKS_DATA[${x}]}"* ]]; then
+                    echo "IGNORED ${x}: name array contains ${JKS_DATA[${x}]}"
+                  else
+                    # Build new line with cert file
+                    TSV_LINE_JKS="${JKS_ARRAY[${i}]}\t"
+                    MD_LINE_JKS="| ${JKS_ARRAY[${i}]} |"
+          
+                    # Standardize cert expiry date (pem & jks differ)
+                    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+                      # For LINUX (GH Runners)
+                      JKS_DATE=$(date -d ${JKS_DATA[${x} + 1]} +'%Y-%m-%d %H:%M:%S')
+                    elif [[ "$OSTYPE" == "darwin"* ]]; then
+                      # For BSD/MacOS - VERSION of DATE (PEM & JKS need diff format conversion)
+                      JKS_DATE=$(date -j -f "%a %b %d %T %Z %Y" "${JKS_DATA[${x} + 1]}" "+%F %T")
+                    else
+                      # Unknown
+                      echo "ERROR: OS type is not recognized."
+                    fi
+          
+                    # Add Cert data: subject & expiry date
+                    TSV_LINE_JKS+="${JKS_DATA[${x}]}\t$JKS_DATE\t"
+                    MD_LINE_JKS+=" ${JKS_DATA[${x}]} | $JKS_DATE |"
+          
+                    # Append finished line to files
+                    echo -e $TSV_LINE_JKS >>certlist.tsv
+                    echo $MD_LINE_JKS >>certlist.md
+                  fi
+                done
+              fi
+            done
+          
+            echo "*** TEST CERT TABLES ***"
+            # cat certlist.tsv
+            echo "MD Path = ${PWD}"
+            cat certlist.md
+          
+            echo "END - Cert List mode"
+          fi
+          
+          # Reset IFS setting
+          unset IFS
+          
+          echo "END - Cert Scanner"
 
-          # Use the function
-          say_hello "GitHub Actions"
