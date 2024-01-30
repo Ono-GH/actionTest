@@ -236,7 +236,7 @@ jobs:
           # cd /Users/OPerzia/git2/apptio-bi/ssr/ssa-app   #SSA (2 pem)
           #cd ~/code/other/cert-scanner                     # Test - Cert-Scan
           #cd /Users/OPerzia/git2/cic/puppet               # Puppet w/ Certs
-          cd /Users/operzia/code/other/apptio-certs       # Apptio Cert repo
+          #cd /Users/operzia/code/other/apptio-certs       # Apptio Cert repo
           echo "Find certs under: " $PWD
           
           IFS=$'\n' # IFS: Allow splitting files found to be 1/line in array
