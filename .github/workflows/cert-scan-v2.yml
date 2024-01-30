@@ -1,0 +1,25 @@
+name: Example Workflow
+
+on:
+  workflow_dispatch:
+#  push:
+#    branches: [ main ]
+#  pull_request:
+#    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Run a multi-line script with a function
+        run: |
+          # Define a bash function
+          function say_hello() {
+            echo "Hello, $1"
+          }
+
+          # Use the function
+          say_hello "GitHub Actions"
