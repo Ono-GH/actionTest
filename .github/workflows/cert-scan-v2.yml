@@ -1,18 +1,14 @@
-name: Example Workflow
+name: Ono Test Bash
 
 on:
   workflow_dispatch:
-#  push:
-#    branches: [ main ]
-#  pull_request:
-#    branches: [ main ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@latest
 
       - name: Run a multi-line script with a function
         run: |
