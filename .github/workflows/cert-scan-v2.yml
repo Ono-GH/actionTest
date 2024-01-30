@@ -2,13 +2,51 @@ name: Ono Test Bash
 
 on:
   workflow_dispatch:
-
+   inputs:
+    mode:
+      description: 'Pick mode to run: list or Jira warning or both'
+      required: true
+      default: list
+      type: choice
+      options:
+        - list
+        - warn
+        - both
+    days:
+      description: 'Jira cert expiry warning if expiring in # of days (only for warn or both mode)'
+      required: false
+      type: string
+    jira:
+      description: 'Jira Project to open cert expiry warn (only for warn or both mode)'
+      required: false
+      type: string
+      
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check inputs
+        run: |
+          echo "mode: ${{ inputs.mode }}"
+          echo "days: ${{ inputs.days }}"
+          echo "jira: ${{ inputs.jira }}"
+          echo "gh_work: " $GITHUB_WORKSPACE      
+
+      # Java installed (Java's KeyTool for cert sniffing required .jks files)
+      - name: Install Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      # Python3 install (required for JSON special character escaping)
+      - name: Install Python3
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11.7'      
 
       - name: Run a multi-line script with a function
         run: |
